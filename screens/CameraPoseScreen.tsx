@@ -1,10 +1,13 @@
 import React, { useEffect, useState, useCallback, useRef, useLayoutEffect } from 'react';
-import { StyleSheet, Text, View, ActivityIndicator, LayoutChangeEvent } from 'react-native';
+import { StyleSheet, Text, View, ActivityIndicator, LayoutChangeEvent, Switch, Pressable } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Camera, useCameraDevice, useFrameProcessor } from 'react-native-vision-camera';
 import { Worklets } from 'react-native-worklets-core';
 import { Canvas, Line as SkiaLine, Circle, vec } from '@shopify/react-native-skia';
 import { VisionCameraProxy } from 'react-native-vision-camera';
+import * as FileSystem from 'expo-file-system';
+import { CameraRoll } from '@react-native-camera-roll/camera-roll';
+import { RecordingView, useViewRecorder } from 'react-native-view-recorder';
 import { PoseSmoother } from '../PoseSmoother';
 import type { PoseLandmark } from '../PoseSmoother';
 import { ALL_EXERCISES } from '../exercises';
@@ -56,11 +59,17 @@ export default function CameraPoseScreen({ exerciseId }: CameraPoseScreenProps) 
   const frontDevice = useCameraDevice('front');
   const device = frontDevice ?? backDevice;
 
+  const recorder = useViewRecorder();
   const [permissionStatus, setPermissionStatus] = useState<'not-determined' | 'granted' | 'denied'>('not-determined');
   const [landmarks, setLandmarks] = useState<PoseLandmark[] | null>(null);
   const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
   const [repCount, setRepCount] = useState(0);
   const [deviceInitSlow, setDeviceInitSlow] = useState(false);
+  const [showCameraFeed, setShowCameraFeed] = useState(true);
+  const [isRecording, setIsRecording] = useState(false);
+  const [lastVideoUri, setLastVideoUri] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const prevShowCameraFeedRef = useRef(true);
 
   const exerciseRef = useRef<ExerciseBase | null>(null);
   const runtimeRef = useRef<RepCounterRuntimeState>({
@@ -108,6 +117,56 @@ export default function CameraPoseScreen({ exerciseId }: CameraPoseScreenProps) 
       setPermissionStatus(result === 'granted' ? 'granted' : 'denied');
     })();
   }, []);
+
+  const record10s = useCallback(
+    async (options: { withCamera: boolean }) => {
+    if (isRecording) return;
+    setIsRecording(true);
+    try {
+        // 记录录制前的相机显示状态
+        prevShowCameraFeedRef.current = showCameraFeed;
+        // 根据按钮决定录制时是否显示相机
+        setShowCameraFeed(options.withCamera);
+
+      const baseDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? '';
+      if (!baseDir) throw new Error('FileSystem cacheDirectory/documentDirectory 不可用');
+
+      const outputUri = `${baseDir}aiposelab_skeleton_${Date.now()}.mp4`;
+      // 原生侧通常需要“纯路径”而不是 file:// URI
+      const outputPath = outputUri.startsWith('file://')
+        ? outputUri.replace(/^file:\/\//, '')
+        : outputUri;
+
+        await recorder.record({
+        output: outputPath,
+        fps: 30,
+        totalFrames: 30 * 10,
+      });
+      setLastVideoUri(outputUri);
+      console.log(`[Record] 视频已保存: ${outputUri}`);
+    } catch (e) {
+      console.warn('[Record] 录制失败', e);
+    } finally {
+        // 录制结束还原相机显示状态
+        setShowCameraFeed(prevShowCameraFeedRef.current);
+      setIsRecording(false);
+    }
+    },
+    [isRecording, recorder, showCameraFeed]
+  );
+
+  const saveToGallery = useCallback(async () => {
+    if (!lastVideoUri || isSaving) return;
+    setIsSaving(true);
+    try {
+      await CameraRoll.save(lastVideoUri, { type: 'video' });
+      console.log('[Record] 已保存到系统相册:', lastVideoUri);
+    } catch (e) {
+      console.warn('[Record] 保存到相册失败', e);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [isSaving, lastVideoUri]);
 
   const handleLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -274,19 +333,74 @@ export default function CameraPoseScreen({ exerciseId }: CameraPoseScreenProps) 
     <View style={styles.container}>
       <StatusBar style="light" hidden />
       <View style={styles.cameraContainer} onLayout={handleLayout}>
-        <Camera
-          style={StyleSheet.absoluteFill}
-          device={device}
-          isActive={true}
-          resizeMode="cover"
-          frameProcessor={frameProcessor}
-        />
-        {renderSkeleton()}
-        <View style={styles.counterContainer}>
-          <Text style={styles.counterLabel}>
-            {ALL_EXERCISES.find((e) => e.id === exerciseId)?.name ?? 'Reps'}
-          </Text>
-          <Text style={styles.counterValue}>{repCount}</Text>
+        <RecordingView
+          sessionId={recorder.sessionId}
+          style={styles.recordLayer}
+          pointerEvents="none"
+        >
+          <View
+            style={[
+              StyleSheet.absoluteFill,
+              showCameraFeed ? null : styles.recordLayerBlack,
+            ]}
+          >
+            <Camera
+              style={[StyleSheet.absoluteFill, showCameraFeed ? null : styles.cameraHidden]}
+              device={device}
+              isActive={true}
+              resizeMode="cover"
+              frameProcessor={frameProcessor}
+              // Android: 使用 TextureView 以便 RecordingView 能捕获相机画面
+              androidPreviewViewType="texture-view"
+            />
+
+            {renderSkeleton()}
+            <View style={styles.counterContainer}>
+              <Text style={styles.counterLabel}>
+                {ALL_EXERCISES.find((e) => e.id === exerciseId)?.name ?? 'Reps'}
+              </Text>
+              <Text style={styles.counterValue}>{repCount}</Text>
+            </View>
+          </View>
+        </RecordingView>
+
+        <View style={styles.controls}>
+          <View style={styles.toggleRow}>
+            <Text style={styles.toggleLabel}>显示相机画面</Text>
+            <Switch value={showCameraFeed} onValueChange={setShowCameraFeed} />
+          </View>
+          <View style={styles.buttonsRow}>
+            <Pressable
+              style={[styles.recordButton, isRecording ? styles.recordButtonDisabled : null]}
+              onPress={() => record10s({ withCamera: false })}
+              disabled={isRecording}
+            >
+              <Text style={styles.recordButtonText}>
+                {isRecording ? '录制中...' : '录制10秒(骨架)'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.recordButton, isRecording ? styles.recordButtonDisabled : null]}
+              onPress={() => record10s({ withCamera: true })}
+              disabled={isRecording}
+            >
+              <Text style={styles.recordButtonText}>
+                {isRecording ? '录制中...' : '录制10秒(骨架+相机)'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[
+                styles.saveButton,
+                (!lastVideoUri || isSaving) ? styles.recordButtonDisabled : null,
+              ]}
+              onPress={saveToGallery}
+              disabled={!lastVideoUri || isSaving}
+            >
+              <Text style={styles.recordButtonText}>
+                {isSaving ? '保存中...' : '保存到相册'}
+              </Text>
+            </Pressable>
+          </View>
         </View>
       </View>
     </View>
@@ -318,6 +432,15 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
   },
+  cameraHidden: {
+    opacity: 0,
+  },
+  recordLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  recordLayerBlack: {
+    backgroundColor: '#000',
+  },
   overlay: {
     position: 'absolute',
     left: 0,
@@ -341,5 +464,53 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     marginTop: 2,
+  },
+  controls: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 24,
+    gap: 12,
+  },
+  buttonsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  toggleLabel: {
+    color: '#fff',
+    fontSize: 14,
+  },
+  recordButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#2D6BFF',
+  },
+  recordButtonDisabled: {
+    opacity: 0.6,
+  },
+  saveButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#34B3FF',
+  },
+  recordButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
