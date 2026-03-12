@@ -7,13 +7,14 @@ import { Canvas, Line as SkiaLine, Circle, vec } from '@shopify/react-native-ski
 import { VisionCameraProxy } from 'react-native-vision-camera';
 import * as FileSystem from 'expo-file-system';
 import { CameraRoll } from '@react-native-camera-roll/camera-roll';
-import { RecordingView, useViewRecorder } from 'react-native-view-recorder';
 import { PoseSmoother } from '../PoseSmoother';
 import type { PoseLandmark } from '../PoseSmoother';
 import { ALL_EXERCISES } from '../exercises';
 import { updateRepCounterFromExercise } from '../exerciseRuntime';
 import type { ExerciseBase } from '../types/workout';
 import type { RepCounterRuntimeState } from '../exerciseRuntime';
+import type { PoseFrameLog, PoseLogFile } from '../types/poseLog';
+import type { VideoFile } from 'react-native-vision-camera';
 
 const poseDetectorPlugin = VisionCameraProxy.initFrameProcessorPlugin('poseDetector', {});
 
@@ -52,24 +53,35 @@ const NEUTRAL_POINT_COLOR = '#FFFFFF';
 
 export interface CameraPoseScreenProps {
   exerciseId: string;
+  /** 录制结束并生成 pose JSON 后，请求进入合成页 */
+  onRequestSynthesis?: (videoPath: string, posePath: string) => void;
 }
 
-export default function CameraPoseScreen({ exerciseId }: CameraPoseScreenProps) {
+const POSE_LOG_FPS = 30;
+
+export default function CameraPoseScreen({ exerciseId, onRequestSynthesis }: CameraPoseScreenProps) {
   const backDevice = useCameraDevice('back');
   const frontDevice = useCameraDevice('front');
   const device = frontDevice ?? backDevice;
 
-  const recorder = useViewRecorder();
+  const cameraRef = useRef<Camera>(null);
   const [permissionStatus, setPermissionStatus] = useState<'not-determined' | 'granted' | 'denied'>('not-determined');
   const [landmarks, setLandmarks] = useState<PoseLandmark[] | null>(null);
   const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
   const [repCount, setRepCount] = useState(0);
   const [deviceInitSlow, setDeviceInitSlow] = useState(false);
   const [showCameraFeed, setShowCameraFeed] = useState(true);
-  const [isRecording, setIsRecording] = useState(false);
+  const [isRecordingVideo, setIsRecordingVideo] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [lastVideoPath, setLastVideoPath] = useState<string | null>(null);
+  const [lastPosePath, setLastPosePath] = useState<string | null>(null);
   const [lastVideoUri, setLastVideoUri] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const prevShowCameraFeedRef = useRef(true);
+
+  const recordStartTimeRef = useRef<number>(0);
+  const poseLogRef = useRef<PoseFrameLog[]>([]);
+  const isRecordingVideoRef = useRef(false);
 
   const exerciseRef = useRef<ExerciseBase | null>(null);
   const runtimeRef = useRef<RepCounterRuntimeState>({
@@ -118,42 +130,50 @@ export default function CameraPoseScreen({ exerciseId }: CameraPoseScreenProps) 
     })();
   }, []);
 
-  const record10s = useCallback(
-    async (options: { withCamera: boolean }) => {
-    if (isRecording) return;
-    setIsRecording(true);
+  const startVideoRecording = useCallback(() => {
+    if (isRecordingVideo || !cameraRef.current) return;
+    recordStartTimeRef.current = performance.now();
+    poseLogRef.current = [];
+    isRecordingVideoRef.current = true;
+    setIsRecordingVideo(true);
+    cameraRef.current.startRecording({
+      onRecordingFinished: (video: VideoFile) => {
+        isRecordingVideoRef.current = false;
+        setIsRecordingVideo(false);
+        const baseDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? '';
+        if (!baseDir) return;
+        const posePath = `${baseDir}aiposelab_pose_${recordStartTimeRef.current}.json`;
+        const logFile: PoseLogFile = {
+          startTime: recordStartTimeRef.current,
+          fps: POSE_LOG_FPS,
+          frames: poseLogRef.current,
+        };
+        FileSystem.writeAsStringAsync(posePath, JSON.stringify(logFile)).then(
+          () => {
+            setLastVideoPath(video.path);
+            setLastPosePath(posePath.startsWith('file://') ? posePath : posePath);
+            const uri = video.path.startsWith('file://') ? video.path : `file://${video.path}`;
+            setLastVideoUri(uri);
+            console.log('[Record] 纯净视频已保存:', video.path, 'pose:', posePath);
+          }
+        ).catch((e) => console.warn('[Record] 写入 pose JSON 失败', e));
+      },
+      onRecordingError: (e) => {
+        isRecordingVideoRef.current = false;
+        setIsRecordingVideo(false);
+        console.warn('[Record] 录制错误', e);
+      },
+    });
+  }, [isRecordingVideo]);
+
+  const endVideoRecording = useCallback(async () => {
+    if (!isRecordingVideo || !cameraRef.current) return;
     try {
-        // 记录录制前的相机显示状态
-        prevShowCameraFeedRef.current = showCameraFeed;
-        // 根据按钮决定录制时是否显示相机
-        setShowCameraFeed(options.withCamera);
-
-      const baseDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? '';
-      if (!baseDir) throw new Error('FileSystem cacheDirectory/documentDirectory 不可用');
-
-      const outputUri = `${baseDir}aiposelab_skeleton_${Date.now()}.mp4`;
-      // 原生侧通常需要“纯路径”而不是 file:// URI
-      const outputPath = outputUri.startsWith('file://')
-        ? outputUri.replace(/^file:\/\//, '')
-        : outputUri;
-
-        await recorder.record({
-        output: outputPath,
-        fps: 30,
-        totalFrames: 30 * 10,
-      });
-      setLastVideoUri(outputUri);
-      console.log(`[Record] 视频已保存: ${outputUri}`);
+      await cameraRef.current.stopRecording();
     } catch (e) {
-      console.warn('[Record] 录制失败', e);
-    } finally {
-        // 录制结束还原相机显示状态
-        setShowCameraFeed(prevShowCameraFeedRef.current);
-      setIsRecording(false);
+      console.warn('[Record] stopRecording 失败', e);
     }
-    },
-    [isRecording, recorder, showCameraFeed]
-  );
+  }, [isRecordingVideo]);
 
   const saveToGallery = useCallback(async () => {
     if (!lastVideoUri || isSaving) return;
@@ -230,6 +250,15 @@ export default function CameraPoseScreen({ exerciseId }: CameraPoseScreenProps) 
       if (result.didIncrement) {
         setRepCount(result.state.count);
       }
+    }
+
+    if (isRecordingVideoRef.current && recordStartTimeRef.current > 0) {
+      const t = now - recordStartTimeRef.current;
+      poseLogRef.current.push({
+        t,
+        landmarks: smoothed.map((p) => ({ x: p.x, y: p.y, z: p.z })),
+        repCount: runtimeRef.current.count,
+      });
     }
   });
 
@@ -333,36 +362,33 @@ export default function CameraPoseScreen({ exerciseId }: CameraPoseScreenProps) 
     <View style={styles.container}>
       <StatusBar style="light" hidden />
       <View style={styles.cameraContainer} onLayout={handleLayout}>
-        <RecordingView
-          sessionId={recorder.sessionId}
-          style={styles.recordLayer}
-          pointerEvents="none"
+        <View
+          style={[
+            styles.recordLayer,
+            StyleSheet.absoluteFill,
+            showCameraFeed ? null : styles.recordLayerBlack,
+          ]}
         >
-          <View
-            style={[
-              StyleSheet.absoluteFill,
-              showCameraFeed ? null : styles.recordLayerBlack,
-            ]}
-          >
-            <Camera
+          <Camera
+              ref={cameraRef}
               style={[StyleSheet.absoluteFill, showCameraFeed ? null : styles.cameraHidden]}
               device={device}
               isActive={true}
               resizeMode="cover"
+              video={true}
               frameProcessor={frameProcessor}
-              // Android: 使用 TextureView 以便 RecordingView 能捕获相机画面
+              onInitialized={() => setCameraReady(true)}
               androidPreviewViewType="texture-view"
             />
 
             {renderSkeleton()}
-            <View style={styles.counterContainer}>
-              <Text style={styles.counterLabel}>
-                {ALL_EXERCISES.find((e) => e.id === exerciseId)?.name ?? 'Reps'}
-              </Text>
-              <Text style={styles.counterValue}>{repCount}</Text>
-            </View>
+          <View style={styles.counterContainer}>
+            <Text style={styles.counterLabel}>
+              {ALL_EXERCISES.find((e) => e.id === exerciseId)?.name ?? 'Reps'}
+            </Text>
+            <Text style={styles.counterValue}>{repCount}</Text>
           </View>
-        </RecordingView>
+        </View>
 
         <View style={styles.controls}>
           <View style={styles.toggleRow}>
@@ -370,24 +396,27 @@ export default function CameraPoseScreen({ exerciseId }: CameraPoseScreenProps) 
             <Switch value={showCameraFeed} onValueChange={setShowCameraFeed} />
           </View>
           <View style={styles.buttonsRow}>
-            <Pressable
-              style={[styles.recordButton, isRecording ? styles.recordButtonDisabled : null]}
-              onPress={() => record10s({ withCamera: false })}
-              disabled={isRecording}
-            >
-              <Text style={styles.recordButtonText}>
-                {isRecording ? '录制中...' : '录制10秒(骨架)'}
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.recordButton, isRecording ? styles.recordButtonDisabled : null]}
-              onPress={() => record10s({ withCamera: true })}
-              disabled={isRecording}
-            >
-              <Text style={styles.recordButtonText}>
-                {isRecording ? '录制中...' : '录制10秒(骨架+相机)'}
-              </Text>
-            </Pressable>
+            {!isRecordingVideo ? (
+              <Pressable
+                style={[styles.recordButton, !cameraReady ? styles.recordButtonDisabled : null]}
+                onPress={startVideoRecording}
+                disabled={!cameraReady}
+              >
+                <Text style={styles.recordButtonText}>开始录制</Text>
+              </Pressable>
+            ) : (
+              <Pressable style={styles.recordButtonStop} onPress={endVideoRecording}>
+                <Text style={styles.recordButtonText}>结束录制</Text>
+              </Pressable>
+            )}
+            {lastVideoPath && lastPosePath && onRequestSynthesis && (
+              <Pressable
+                style={styles.saveButton}
+                onPress={() => onRequestSynthesis(lastVideoPath, lastPosePath)}
+              >
+                <Text style={styles.recordButtonText}>合成骨架视频</Text>
+              </Pressable>
+            )}
             <Pressable
               style={[
                 styles.saveButton,
@@ -496,6 +525,14 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     backgroundColor: '#2D6BFF',
+  },
+  recordButtonStop: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#C62828',
   },
   recordButtonDisabled: {
     opacity: 0.6,

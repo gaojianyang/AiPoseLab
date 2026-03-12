@@ -1,33 +1,19 @@
-declare module 'react-native-view-recorder' {
-  export type RecorderOnFrameEvent = { frameIndex: number };
-
-  export type RecordOptions = {
-    output: string;
-    fps: number;
-    totalFrames: number;
-    onFrame?: (event: RecorderOnFrameEvent) => void | Promise<void>;
-  };
-
-  export type ViewRecorder = {
-    sessionId: string;
-    record: (options: RecordOptions) => Promise<void>;
-  };
-
-  export function useViewRecorder(): ViewRecorder;
-
-  export const RecordingView: React.ComponentType<{
-    sessionId: string;
-    style?: any;
-    pointerEvents?: any;
-    children?: React.ReactNode;
-  }>;
-}
-
 declare module 'expo-file-system' {
   export const cacheDirectory: string | null;
   export const documentDirectory: string | null;
 
+  export enum EncodingType {
+    UTF8 = 'utf8',
+    Base64 = 'base64',
+  }
+
+  export type ReadingOptions = { encoding?: EncodingType | 'utf8' | 'base64'; position?: number; length?: number };
+  export type WritingOptions = { encoding?: EncodingType | 'utf8' | 'base64' };
+
   export type MakeDirectoryOptions = { intermediates?: boolean };
   export function makeDirectoryAsync(dirUri: string, options?: MakeDirectoryOptions): Promise<void>;
+  export function readDirectoryAsync(fileUri: string): Promise<string[]>;
+  export function readAsStringAsync(fileUri: string, options?: ReadingOptions): Promise<string>;
+  export function writeAsStringAsync(fileUri: string, contents: string, options?: WritingOptions): Promise<void>;
 }
 
