@@ -3,13 +3,20 @@ import { BackHandler } from 'react-native';
 import ExerciseListScreen from './screens/ExerciseListScreen';
 import CameraPoseScreen from './screens/CameraPoseScreen';
 import SynthesisScreen from './screens/SynthesisScreen';
+import SkinScreenList from './screens/SkinScreenList';
+import { setCurrentSkin } from './skinStore';
 
 export default function App() {
   const [selectedExerciseId, setSelectedExerciseId] = useState(null);
   const [synthesisParams, setSynthesisParams] = useState(null);
+  const [showSkinList, setShowSkinList] = useState(false);
 
   useEffect(() => {
     const onBackPress = () => {
+      if (showSkinList) {
+        setShowSkinList(false);
+        return true;
+      }
       if (synthesisParams) {
         setSynthesisParams(null);
         return true;
@@ -24,8 +31,25 @@ export default function App() {
     return () => sub.remove();
   }, [selectedExerciseId, synthesisParams]);
 
+  if (showSkinList) {
+    return (
+      <SkinScreenList
+        onBack={() => setShowSkinList(false)}
+        onSelectSkin={(skin) => {
+          setCurrentSkin(skin);
+          setShowSkinList(false);
+        }}
+      />
+    );
+  }
+
   if (!selectedExerciseId) {
-    return <ExerciseListScreen onSelectExercise={setSelectedExerciseId} />;
+    return (
+      <ExerciseListScreen
+        onSelectExercise={setSelectedExerciseId}
+        onOpenSkinList={() => setShowSkinList(true)}
+      />
+    );
   }
 
   if (synthesisParams) {

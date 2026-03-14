@@ -63,6 +63,32 @@ export default function SynthesisScreen({
     }
   }, [isSynthesizing, videoPath, posePath, targetFps, debugFrameWatermark]);
 
+  const runHighlightSynthesis = useCallback(async () => {
+    try {
+      if (isSynthesizing) return;
+      setIsSynthesizing(true);
+      setProgress(0);
+      setOutputUri(null);
+      const result = await WorkoutVideoGenerator.generateHighlights({
+        inputVideoUri: videoPath,
+        poseJsonPath: posePath,
+        targetFps,
+        debugFrameWatermark,
+        // 默认：每 10 下取一次，每次 ±3s，总时长上限 60s
+        windowMs: 3000,
+        everyN: 10,
+        maxTotalMs: 60_000,
+        onProgress: (p) => setProgress(p),
+      });
+      setOutputUri(result.outputVideoPath);
+      console.log('[Synthesis] 高光已生成:', result.outputVideoPath);
+    } catch (e) {
+      console.warn('[Synthesis] 高光合成失败', e);
+    } finally {
+      setIsSynthesizing(false);
+    }
+  }, [isSynthesizing, videoPath, posePath, targetFps, debugFrameWatermark]);
+
   const saveToGallery = useCallback(async () => {
     if (!outputUri || isSaving) return;
     setIsSaving(true);
@@ -123,12 +149,21 @@ export default function SynthesisScreen({
 
       <View style={styles.controls}>
         {!isSynthesizing && !outputUri && (
-          <Pressable
-            style={styles.primaryBtn}
-            onPress={runSynthesis}
-          >
-            <Text style={styles.primaryBtnText}>开始合成</Text>
-          </Pressable>
+          <>
+            <Pressable
+              style={styles.primaryBtn}
+              onPress={runSynthesis}
+            >
+              <Text style={styles.primaryBtnText}>完整合成</Text>
+            </Pressable>
+            <View style={{ height: 8 }} />
+            <Pressable
+              style={[styles.primaryBtn, { backgroundColor: '#FF9F1C' }]}
+              onPress={runHighlightSynthesis}
+            >
+              <Text style={styles.primaryBtnText}>高光生成</Text>
+            </Pressable>
+          </>
         )}
         {outputUri && (
           <Pressable

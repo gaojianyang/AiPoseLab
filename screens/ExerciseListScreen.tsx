@@ -6,9 +6,10 @@ import { ALL_EXERCISES } from '../exercises';
 
 export interface ExerciseListScreenProps {
   onSelectExercise: (exerciseId: string) => void;
+  onOpenSkinList?: () => void;
 }
 
-export default function ExerciseListScreen({ onSelectExercise }: ExerciseListScreenProps) {
+export default function ExerciseListScreen({ onSelectExercise, onOpenSkinList }: ExerciseListScreenProps) {
   // 进入列表时预加载相机模块，减少进入相机页时“正在初始化相机设备...”卡住
   useEffect(() => {
     Camera.getAvailableCameraDevices();
@@ -17,6 +18,12 @@ export default function ExerciseListScreen({ onSelectExercise }: ExerciseListScr
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
+      <View style={styles.toolbar}>
+        <Text style={styles.toolbarTitle}>选择动作</Text>
+        <TouchableOpacity style={styles.toolbarBtn} onPress={onOpenSkinList}>
+          <Text style={styles.toolbarBtnText}>皮肤</Text>
+        </TouchableOpacity>
+      </View>
       <FlatList
         data={ALL_EXERCISES}
         keyExtractor={(item) => item.id}
@@ -43,10 +50,33 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000',
   },
+  toolbar: {
+    paddingTop: 48,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  toolbarTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  toolbarBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  toolbarBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+  },
   exerciseListContent: {
     flexGrow: 1,
     paddingHorizontal: 16,
-    paddingTop: 40,
+    paddingTop: 8,
     paddingBottom: 24,
   },
   exerciseRow: {

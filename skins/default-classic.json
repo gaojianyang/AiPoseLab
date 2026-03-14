@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "skins": [
+    {
+      "id": "classic_blue_orange",
+      "name": "经典蓝橙火柴人",
+      "description": "左右身体异色，适合新手训练的基础皮肤。",
+      "rarity": "common",
+      "price": {
+        "currency": "coin",
+        "amount": 0
+      },
+      "preview": {
+        "localAssetName": "classic_blue_orange_thumb"
+      },
+      "style": {
+        "line": {
+          "width": 4,
+          "color": "#FFFFFF",
+          "opacity": 1,
+          "cap": "round",
+          "join": "round"
+        },
+        "joint": {
+          "radius": 6,
+          "leftColor": "#34B3FF",
+          "rightColor": "#FF8A3C",
+          "neutralColor": "#FFFFFF",
+          "highlightColor": "#FFD700"
+        },
+        "body": {
+          "torso": {
+            "thickness": 10,
+            "color": "#FFFFFF",
+            "fillOpacity": 0.15
+          },
+          "limb": {
+            "thickness": 6,
+            "leftColor": "#34B3FF",
+            "rightColor": "#FF8A3C"
+          }
+        },
+        "head": {
+          "radius": 14,
+          "borderWidth": 3,
+          "borderColor": "#FFFFFF",
+          "fillColor": "transparent",
+          "hair": {
+            "style": "short",
+            "color": "#FFCC00"
+          },
+          "face": {
+            "eyes": {
+              "type": "dot",
+              "color": "#FFFFFF",
+              "size": 3
+            },
+            "mouth": {
+              "type": "smile",
+              "color": "#FFFFFF",
+              "width": 10
+            }
+          }
+        },
+        "effects": {
+          "repGlow": {
+            "enabled": true,
+            "color": "#00FFAA",
+            "radiusScale": 1.4,
+            "triggerOnRepChange": true
+          },
+          "trail": {
+            "enabled": false
+          }
+        }
+      }
+    }
+  ]
+}
+

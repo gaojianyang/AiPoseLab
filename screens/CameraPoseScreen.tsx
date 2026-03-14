@@ -3,53 +3,21 @@ import { StyleSheet, Text, View, ActivityIndicator, LayoutChangeEvent, Switch, P
 import { StatusBar } from 'expo-status-bar';
 import { Camera, useCameraDevice, useFrameProcessor } from 'react-native-vision-camera';
 import { Worklets } from 'react-native-worklets-core';
-import { Canvas, Line as SkiaLine, Circle, vec } from '@shopify/react-native-skia';
 import { VisionCameraProxy } from 'react-native-vision-camera';
 import * as FileSystem from 'expo-file-system';
 import { CameraRoll } from '@react-native-camera-roll/camera-roll';
 import { PoseSmoother } from '../PoseSmoother';
 import type { PoseLandmark } from '../PoseSmoother';
 import { ALL_EXERCISES } from '../exercises';
+import { useSkin } from '../skinStore';
 import { updateRepCounterFromExercise } from '../exerciseRuntime';
 import type { ExerciseBase } from '../types/workout';
 import type { RepCounterRuntimeState } from '../exerciseRuntime';
 import type { PoseFrameLog, PoseLogFile } from '../types/poseLog';
 import type { VideoFile } from 'react-native-vision-camera';
+import { PoseOverlay } from '../components/PoseOverlay';
 
 const poseDetectorPlugin = VisionCameraProxy.initFrameProcessorPlugin('poseDetector', {});
-
-const POSE_CONNECTIONS: [number, number][] = [
-  [0, 1], [1, 2], [2, 3], [3, 7],
-  [0, 4], [4, 5], [5, 6], [6, 8],
-  [9, 10],
-  [11, 12],
-  [11, 13], [13, 15],
-  [15, 17], [15, 19], [15, 21], [17, 19],
-  [12, 14], [14, 16],
-  [16, 18], [16, 20], [16, 22], [18, 20],
-  [11, 23], [12, 24], [23, 24],
-  [23, 25], [24, 26],
-  [25, 27], [26, 28],
-  [27, 29], [28, 30],
-  [29, 31], [30, 32],
-  [27, 31], [28, 32],
-];
-
-const LEFT_LANDMARK_INDICES = new Set<number>([
-  1, 2, 3, 7, 9,
-  11, 13, 15, 17, 19, 21,
-  23, 25, 27, 29, 31,
-]);
-
-const RIGHT_LANDMARK_INDICES = new Set<number>([
-  4, 5, 6, 8, 10,
-  12, 14, 16, 18, 20, 22,
-  24, 26, 28, 30, 32,
-]);
-
-const LEFT_POINT_COLOR = '#34B3FF';
-const RIGHT_POINT_COLOR = '#FF8A3C';
-const NEUTRAL_POINT_COLOR = '#FFFFFF';
 
 export interface CameraPoseScreenProps {
   exerciseId: string;
@@ -65,6 +33,7 @@ export default function CameraPoseScreen({ exerciseId, onRequestSynthesis }: Cam
   const device = frontDevice ?? backDevice;
 
   const cameraRef = useRef<Camera>(null);
+  const [skin] = useSkin();
   const [permissionStatus, setPermissionStatus] = useState<'not-determined' | 'granted' | 'denied'>('not-determined');
   const [landmarks, setLandmarks] = useState<PoseLandmark[] | null>(null);
   const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
@@ -280,52 +249,16 @@ export default function CameraPoseScreen({ exerciseId, onRequestSynthesis }: Cam
 
   const renderSkeleton = () => {
     const { width: viewW, height: viewH } = previewSize;
-    if (!landmarks || viewW === 0 || viewH === 0) return null;
-
-    const toView = (nx: number, ny: number) => ({
-      x: nx * viewW,
-      y: (1 - ny) * viewH,
-    });
+    if (viewW === 0 || viewH === 0) return null;
 
     return (
-      <Canvas style={[styles.overlay, { width: viewW, height: viewH }]}>
-        {POSE_CONNECTIONS.map(([start, end], index) => {
-          const a = landmarks[start];
-          const b = landmarks[end];
-          if (!a || !b) return null;
-          const p1 = toView(a.x, a.y);
-          const p2 = toView(b.x, b.y);
-          return (
-            <SkiaLine
-              key={`${start}-${end}-${index}`}
-              p1={vec(p1.x, p1.y)}
-              p2={vec(p2.x, p2.y)}
-              color="#FFFFFF"
-              strokeWidth={4}
-            />
-          );
-        })}
-
-        {landmarks.map((pt, index) => {
-          const p = toView(pt.x, pt.y);
-          const isLeft = LEFT_LANDMARK_INDICES.has(index);
-          const isRight = RIGHT_LANDMARK_INDICES.has(index);
-          const color = isLeft
-            ? LEFT_POINT_COLOR
-            : isRight
-            ? RIGHT_POINT_COLOR
-            : NEUTRAL_POINT_COLOR;
-          return (
-            <Circle
-              key={`pt-${index}`}
-              cx={p.x}
-              cy={p.y}
-              r={5}
-              color={color}
-            />
-          );
-        })}
-      </Canvas>
+      <View style={[styles.overlay, { width: viewW, height: viewH }]} pointerEvents="box-none">
+        <PoseOverlay
+          style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }}
+          landmarks={landmarks ? landmarks.map((p) => ({ x: p.x, y: p.y, z: p.z })) : null}
+          skinConfig={skin.style}
+        />
+      </View>
     );
   };
 

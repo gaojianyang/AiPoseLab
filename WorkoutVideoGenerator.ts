@@ -4,6 +4,7 @@ import { Skia, ImageFormat } from '@shopify/react-native-skia';
 import { FFmpegKit, FFprobeKit, ReturnCode } from 'ffmpeg-kit-react-native';
 import { NativeModules, Platform, NativeEventEmitter } from 'react-native';
 import type { PoseLogFile, PoseFrameLog } from './types/poseLog';
+import { getCurrentSkin } from './skinStore';
 
 export interface WorkoutVideoGeneratorOptions {
   inputVideoUri: string;
@@ -13,6 +14,10 @@ export interface WorkoutVideoGeneratorOptions {
   targetFps?: number;
   /** 是否在画面角落绘制帧序号水印（便于排查卡顿是数据对齐还是编码问题） */
   debugFrameWatermark?: boolean;
+  /** 高光模式下，原生侧只会保留这些时间段内的帧（单位 ms，相对录制开始）。*/
+  highlightSegments?: { startMs: number; endMs: number }[];
+  /** 皮肤样式 JSON 字符串，若不传则使用 defaultSkin.style。 */
+  skinStyleJson?: string;
   /** （实验）使用 Android 原生合成器；当前实现仅验证桥接，尚未真正叠加骨架 */
   useNativeRenderer?: boolean;
   onProgress?: (p: number) => void;
@@ -86,6 +91,109 @@ async function getRobotoTypeface(): Promise<any> {
 }
 
 export class WorkoutVideoGenerator {
+  /**
+   * 根据 poseLog 生成「高光」时间段：
+   * - 总共 reps=R 时，优先挑第 1 下、每 10 下、第 R 下；
+   * - 每个 rep 左右 windowMs（默认 3000ms）；
+   * - 自动合并重叠区间，并限制总时长不超过 maxTotalMs（默认 60000ms）。
+   */
+  static computeHighlightSegments(
+    poseLog: PoseLogFile,
+    windowMs = 3000,
+    everyN = 10,
+    maxTotalMs = 60_000,
+  ): { startMs: number; endMs: number }[] {
+    const frames = poseLog.frames;
+    if (!frames.length) return [];
+    const totalReps = frames[frames.length - 1]?.repCount ?? 0;
+    if (!totalReps) return [];
+
+    const targets: number[] = [];
+    targets.push(1);
+    for (let r = everyN; r <= totalReps; r += everyN) {
+      if (!targets.includes(r)) targets.push(r);
+    }
+    if (!targets.includes(totalReps)) targets.push(totalReps);
+
+    const rawSegments: { startMs: number; endMs: number }[] = [];
+    for (const tRep of targets) {
+      const frame = frames.find((f) => f.repCount >= tRep);
+      if (!frame) continue;
+      const center = frame.t;
+      rawSegments.push({
+        startMs: Math.max(0, center - windowMs),
+        endMs: center + windowMs,
+      });
+    }
+
+    if (!rawSegments.length) return [];
+
+    // 合并重叠区间
+    rawSegments.sort((a, b) => a.startMs - b.startMs);
+    const merged: { startMs: number; endMs: number }[] = [];
+    let cur = { ...rawSegments[0] };
+    for (let i = 1; i < rawSegments.length; i += 1) {
+      const seg = rawSegments[i];
+      if (seg.startMs <= cur.endMs) {
+        cur.endMs = Math.max(cur.endMs, seg.endMs);
+      } else {
+        merged.push(cur);
+        cur = { ...seg };
+      }
+    }
+    merged.push(cur);
+
+    // 限制总时长
+    const limited: { startMs: number; endMs: number }[] = [];
+    let acc = 0;
+    for (const seg of merged) {
+      const len = seg.endMs - seg.startMs;
+      if (acc + len <= maxTotalMs) {
+        limited.push(seg);
+        acc += len;
+      } else {
+        const remain = maxTotalMs - acc;
+        if (remain > 500) {
+          limited.push({ startMs: seg.startMs, endMs: seg.startMs + remain });
+        }
+        break;
+      }
+    }
+
+    return limited;
+  }
+
+  /**
+   * 高光视频生成：内部会自动根据 pose JSON 计算高光区间，并调用原生合成器。
+   */
+  static async generateHighlights(
+    opts: Omit<WorkoutVideoGeneratorOptions, 'useNativeRenderer' | 'highlightSegments'> & {
+      windowMs?: number;
+      everyN?: number;
+      maxTotalMs?: number;
+    },
+  ): Promise<WorkoutVideoResult> {
+    const { poseJsonPath, windowMs, everyN, maxTotalMs, ...rest } = opts;
+    const poseJson = await FileSystem.readAsStringAsync(poseJsonPath);
+    const poseLog = JSON.parse(poseJson) as PoseLogFile;
+    const segments = WorkoutVideoGenerator.computeHighlightSegments(
+      poseLog,
+      windowMs,
+      everyN,
+      maxTotalMs,
+    );
+    if (!segments.length) {
+      throw new Error('没有找到可用的高光区间（rep 计数可能为 0）');
+    }
+
+    return WorkoutVideoGenerator.generate({
+      ...rest,
+      poseJsonPath,
+      useNativeRenderer: true,
+      highlightSegments: segments,
+    });
+  }
+
   static async generate(
     opts: WorkoutVideoGeneratorOptions,
   ): Promise<WorkoutVideoResult> {
@@ -95,6 +203,8 @@ export class WorkoutVideoGenerator {
       outputVideoPath,
       targetFps: optsFps,
       debugFrameWatermark = true,
+      highlightSegments,
+      skinStyleJson,
       useNativeRenderer = false,
       onProgress,
     } = opts;
@@ -119,6 +229,8 @@ export class WorkoutVideoGenerator {
         outputVideoPath ??
         `${baseDir}workout_native_${ts}.mp4`;
 
+      const skinJson = skinStyleJson ?? JSON.stringify(getCurrentSkin().style);
+
       // 原生模块通过 DeviceEventEmitter 主动推送进度，这里订阅事件并转给 onProgress
       let progressSub: { remove: () => void } | undefined;
       if (onProgress) {
@@ -139,6 +251,8 @@ export class WorkoutVideoGenerator {
           poseJsonPath,
           normalizePath(outPath),
           Math.round(targetFps),
+          highlightSegments ? JSON.stringify(highlightSegments) : null,
+          skinJson,
         );
         onProgress?.(1);
         return { outputVideoPath: resultPath };
@@ -211,18 +325,20 @@ export class WorkoutVideoGenerator {
       }
     };
 
+    const { line, joint } = getCurrentSkin().style;
+
     // 逐个拆分，定位到底是哪一个 JSI API 返回 undefined
     const linePaint: any = skiaInit('paint.line.create', () => Skia.Paint());
-    skiaInit('paint.line.color', () => linePaint.setColor(Skia.Color('#FFFFFF')));
-    skiaInit('paint.line.strokeWidth', () => linePaint.setStrokeWidth(4));
+    skiaInit('paint.line.color', () => linePaint.setColor(Skia.Color(line.color)));
+    skiaInit('paint.line.strokeWidth', () => linePaint.setStrokeWidth(line.width));
     skiaInit('paint.line.style', () => linePaint.setStyle(1));
 
     const leftPaint: any = skiaInit('paint.left.create', () => Skia.Paint());
-    skiaInit('paint.left.color', () => leftPaint.setColor(Skia.Color('#34B3FF')));
+    skiaInit('paint.left.color', () => leftPaint.setColor(Skia.Color(joint.leftColor)));
     const rightPaint: any = skiaInit('paint.right.create', () => Skia.Paint());
-    skiaInit('paint.right.color', () => rightPaint.setColor(Skia.Color('#FF8A3C')));
+    skiaInit('paint.right.color', () => rightPaint.setColor(Skia.Color(joint.rightColor)));
     const neutralPaint: any = skiaInit('paint.neutral.create', () => Skia.Paint());
-    skiaInit('paint.neutral.color', () => neutralPaint.setColor(Skia.Color('#FFFFFF')));
+    skiaInit('paint.neutral.color', () => neutralPaint.setColor(Skia.Color(joint.neutralColor)));
 
     // 计数与水印画笔
     // 优先尝试使用自定义 Roboto 字体；失败则退回无字体模式
@@ -279,7 +395,7 @@ export class WorkoutVideoGenerator {
       landmarks.forEach((pt, idx) => {
         const p = toView(pt.x, pt.y);
         const paint = LEFT.has(idx) ? leftPaint : RIGHT.has(idx) ? rightPaint : neutralPaint;
-        canvas.drawCircle(p.x, p.y, 5, paint);
+        canvas.drawCircle(p.x, p.y, joint.radius, paint);
       });
       void repCount;
     };
