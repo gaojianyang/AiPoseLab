@@ -63,6 +63,8 @@ export interface HeadStyle {
   fillColor?: string;
   /** 原生头饰贴图：如 'pirate_hat' 表示使用 assets/pirate_hat.png，仅该皮肤会绘制 */
   asset?: string;
+  /** 是否显示头顶部位（圆/脸/帽）。配置界面可切换，默认 true */
+  visible?: boolean;
   /** 是否绘制代表头的圆（及发型）。显示脸部挂件时可设为 false */
   showHeadCircle?: boolean;
   /** 是否绘制面部骨架连线（眼睛、嘴巴等）。显示脸部挂件时可设为 false */
@@ -104,6 +106,30 @@ export interface AttachmentSprite {
   color: string;
 }
 
+/** 单个部位的配置：显示/隐藏 + 线条或图片 + 参数 */
+export interface SkinPartEntry {
+  visible: boolean;
+  type: 'line' | 'image';
+  lineWidth?: number;
+  imageAsset?: string;
+}
+
+/** 配置界面用的部位 key，顺序与界面列表一致 */
+export type SkinPartKey =
+  | 'headTop'
+  | 'face'
+  | 'body'
+  | 'leftThigh'
+  | 'leftCalf'
+  | 'rightThigh'
+  | 'rightCalf'
+  | 'leftElbow'
+  | 'leftArm'
+  | 'rightElbow'
+  | 'rightArm';
+
+export type SkinPartConfig = Partial<Record<SkinPartKey, SkinPartEntry>>;
+
 /**
  * 单个皮肤的完整样式描述。
  * MediaPipe 骨骼结构由代码固定，皮肤只负责“怎么画”。
@@ -111,9 +137,13 @@ export interface AttachmentSprite {
 export interface StickmanSkinStyle {
   line: LineStyle;
   joint: JointStyle;
+  /** 各部位显示配置（头顶/脸/躯体/四肢等），配置界面编辑后写回 */
+  partConfig?: SkinPartConfig;
   body?: {
     torso?: TorsoStyle;
     limb?: LimbStyle;
+    /** 躯干部位挂图（肩 11,12 与髋 23,24 围成的身体区域） */
+    asset?: string;
   };
   head?: HeadStyle;
   effects?: SkinEffects;

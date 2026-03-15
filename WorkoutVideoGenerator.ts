@@ -20,6 +20,8 @@ export interface WorkoutVideoGeneratorOptions {
   skinStyleJson?: string;
   /** （实验）使用 Android 原生合成器；当前实现仅验证桥接，尚未真正叠加骨架 */
   useNativeRenderer?: boolean;
+  /** Android 原生合成时使用硬件编码（h264_mediacodec），否则用 libx264 */
+  useHardwareEncoder?: boolean;
   onProgress?: (p: number) => void;
 }
 
@@ -206,6 +208,7 @@ export class WorkoutVideoGenerator {
       highlightSegments,
       skinStyleJson,
       useNativeRenderer = false,
+      useHardwareEncoder = false,
       onProgress,
     } = opts;
 
@@ -216,11 +219,16 @@ export class WorkoutVideoGenerator {
       targetFps: optsFps,
       debugFrameWatermark,
       useNativeRenderer,
+      useHardwareEncoder,
     });
 
     // Step 1：在 Android 上优先走原生合成入口
     if (Platform.OS === 'android' && useNativeRenderer && NativeModules.WorkoutVideoNativeRenderer) {
-      console.log('[WorkoutVideoGenerator] 使用 Android 原生合成器 (WorkoutVideoNativeRenderer)');
+      const useHardware = !!useHardwareEncoder;
+      console.log(
+        '[WorkoutVideoGenerator] 使用 Android 原生合成器',
+        useHardware ? '(硬件编码 h264_mediacodec)' : '(软件编码 libx264)',
+      );
       const baseDir = FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? '';
       if (!baseDir) throw new Error('FileSystem cacheDirectory/documentDirectory 不可用');
       const ts = Date.now();
@@ -246,7 +254,10 @@ export class WorkoutVideoGenerator {
       const targetFps = optsFps ?? 30;
 
       try {
-        const resultPath: string = await NativeModules.WorkoutVideoNativeRenderer.render(
+        const renderMethod = useHardware
+          ? NativeModules.WorkoutVideoNativeRenderer.renderHardware
+          : NativeModules.WorkoutVideoNativeRenderer.render;
+        const resultPath: string = await renderMethod(
           normalizedIn,
           poseJsonPath,
           normalizePath(outPath),

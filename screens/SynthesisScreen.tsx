@@ -39,7 +39,7 @@ export default function SynthesisScreen({
     return () => sub.remove();
   }, [onBack]);
 
-  const runSynthesis = useCallback(async () => {
+  const runSynthesis = useCallback(async (useHardwareEncoder = false) => {
     try {
       if (isSynthesizing) return;
       setIsSynthesizing(true);
@@ -50,8 +50,8 @@ export default function SynthesisScreen({
         poseJsonPath: posePath,
         targetFps,
         debugFrameWatermark,
-        // Android 上强制走原生合成路径（当前原生实现仅做转码拷贝，占位）
         useNativeRenderer: true,
+        useHardwareEncoder,
         onProgress: (p) => setProgress(p),
       });
       setOutputUri(result.outputVideoPath);
@@ -152,9 +152,16 @@ export default function SynthesisScreen({
           <>
             <Pressable
               style={styles.primaryBtn}
-              onPress={runSynthesis}
+              onPress={() => runSynthesis(false)}
             >
               <Text style={styles.primaryBtnText}>完整合成</Text>
+            </Pressable>
+            <View style={{ height: 8 }} />
+            <Pressable
+              style={[styles.primaryBtn, { backgroundColor: '#2D8B57' }]}
+              onPress={() => runSynthesis(true)}
+            >
+              <Text style={styles.primaryBtnText}>硬件合成</Text>
             </Pressable>
             <View style={{ height: 8 }} />
             <Pressable

@@ -6,6 +6,10 @@ import { defaultSkin } from '../skins/defaultSkin';
 
 export interface SkinScreenListProps {
   onBack: () => void;
+  /** 打开当前皮肤的配置界面 */
+  onOpenConfig?: () => void;
+  /** 打开部位商店（头顶/脸部/身体） */
+  onOpenStore?: () => void;
   /** 预留：选中皮肤回调，当前可不传，仅展示列表 */
   onSelectSkin?: (skin: StickmanSkin) => void;
 }
@@ -303,6 +307,7 @@ const SKINS_DEMO: StickmanSkin[] = [
       body: {
         torso: { thickness: 10, color: '#8B4513', fillOpacity: 0.2 },
         limb: { thickness: 6, leftColor: '#D2691E', rightColor: '#CD853F' },
+        asset: 'pirate_body',
       },
       head: {
         radius: 24,
@@ -334,7 +339,7 @@ const itemGap = 12;
 const cardWidth =
   (screenWidth - itemHorizontalPadding * 2 - itemGap * (numColumns - 1)) / numColumns;
 
-export default function SkinScreenList({ onBack, onSelectSkin }: SkinScreenListProps) {
+export default function SkinScreenList({ onBack, onOpenConfig, onOpenStore, onSelectSkin }: SkinScreenListProps) {
   const renderItem = useCallback(
     ({ item }: { item: StickmanSkin }) => {
       const rarityText =
@@ -374,7 +379,17 @@ export default function SkinScreenList({ onBack, onSelectSkin }: SkinScreenListP
         <Pressable onPress={onBack} style={styles.backBtn}>
           <Text style={styles.backBtnText}>← 返回</Text>
         </Pressable>
-        <Text style={styles.title}>皮肤商店</Text>
+        <Text style={styles.title}>皮肤</Text>
+        {onOpenStore ? (
+          <Pressable onPress={onOpenStore} style={styles.configBtn}>
+            <Text style={styles.configBtnText}>商店</Text>
+          </Pressable>
+        ) : null}
+        {onOpenConfig ? (
+          <Pressable onPress={onOpenConfig} style={styles.configBtn}>
+            <Text style={styles.configBtnText}>配置</Text>
+          </Pressable>
+        ) : null}
       </View>
       <FlatList
         contentContainerStyle={styles.listContent}
@@ -409,6 +424,17 @@ const styles = StyleSheet.create({
   backBtnText: {
     color: '#FFFFFF',
     fontSize: 16,
+  },
+  configBtn: {
+    marginLeft: 'auto',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  configBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
   },
   title: {
     color: '#FFFFFF',
